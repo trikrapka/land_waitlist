@@ -1,71 +1,66 @@
 import { put } from '@vercel/blob';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-export default async function handler(
-  request: VercelRequest,
-  response: VercelResponse,
-) {
-  // 1. Handle Preflight/CORS
-  response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+// Vercel Serverless Function entry point
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (request.method === 'OPTIONS') {
-    return response.status(200).end();
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
-  // 2. Validate Method
-  if (request.method !== 'POST') {
-    return response.status(405).json({ error: 'Method not allowed' });
-  }
-
-  // 3. Validate Payload
-  const { email } = request.body || {};
-  if (!email || !email.includes('@')) {
-    return response.status(400).json({ error: 'Valid email is required' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // 4. Token Check
+    const { email } = req.body || {};
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
     const token = process.env.BLOB_READ_WRITE_TOKEN;
+    
     if (!token) {
-      console.error('CRITICAL: BLOB_READ_WRITE_TOKEN is not defined in environment variables.');
-      return response.status(500).json({ 
-        error: 'Missing Configuration', 
-        details: 'BLOB_READ_WRITE_TOKEN is not set on the server.' 
+      return res.status(500).json({ 
+        error: 'Missing Token', 
+        message: 'BLOB_READ_WRITE_TOKEN is not set in environment variables.' 
       });
     }
 
-    // 5. Generate Filename
-    const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, '_');
-    const filename = `waitlist/${Date.now()}-${sanitizedEmail}.json`;
+    // Attempt to store in Vercel Blob
+    const filename = `waitlist/${Date.now()}-${email.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
     
-    console.log(`Attempting to upload to Vercel Blob: ${filename}`);
-
-    // 6. Perform Upload
-    const blob = await put(filename, JSON.stringify({
+    // We use a simple JSON string as the content
+    const content = JSON.stringify({
       email,
-      submittedAt: new Date().toISOString(),
-    }), {
-      access: 'private', // Match user example preference
-      token: token,      // Explicitly pass token for robustness
-      addRandomSuffix: false,
+      timestamp: new Date().toISOString(),
     });
 
-    console.log(`Successfully stored email at: ${blob.url}`);
+    const blob = await put(filename, content, {
+      access: 'public', // Changed back to public for easier initial testing
+      token: token,
+      contentType: 'application/json',
+    });
 
-    return response.status(200).json({ 
-      message: 'Success',
+    return res.status(200).json({ 
+      success: true, 
       url: blob.url 
     });
+
   } catch (error: any) {
-    console.error('Vercel Blob storage error:', error.message || error);
+    console.error('Submit email error:', error);
     
-    // Deliver more useful error details for debugging
-    return response.status(500).json({ 
-      error: 'Vercel Blob Error',
+    // Return the actual error message to the client for debugging
+    return res.status(500).json({ 
+      error: 'Exception Occurred',
       message: error.message,
-      code: error.code || 'UNKNOWN'
+      stack: error.stack?.split('\n')[0], // Just the first line of the stack
+      token_check: !!process.env.BLOB_READ_WRITE_TOKEN
     });
   }
 }
