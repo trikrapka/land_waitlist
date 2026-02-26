@@ -1,4 +1,4 @@
-import { sql } from '@vercel/postgres';
+import { put } from '@vercel/blob';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(
@@ -16,15 +16,24 @@ export default async function handler(
   }
 
   try {
-    // Create table if it doesn't exist
-    await sql`CREATE TABLE IF NOT EXISTS waitlist ( email TEXT UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );`;
+    // Store each email as a separate file to avoid concurrent write issues
+    // Path: waitlist/<timestamp>-<email>.json
+    const filename = `waitlist/${Date.now()}-${email.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
     
-    // Insert email
-    await sql`INSERT INTO waitlist (email) VALUES (${email}) ON CONFLICT (email) DO NOTHING;`;
-    
-    return response.status(200).json({ message: 'Success' });
+    const blob = await put(filename, JSON.stringify({
+      email,
+      submittedAt: new Date().toISOString(),
+    }), {
+      access: 'public',
+      addRandomSuffix: false, // We use timestamp for uniqueness
+    });
+
+    return response.status(200).json({ 
+      message: 'Success',
+      url: blob.url 
+    });
   } catch (error) {
-    console.error('Database error:', error);
+    console.error('Blob storage error:', error);
     return response.status(500).json({ error: 'Internal server error' });
   }
 }
